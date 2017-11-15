@@ -10,6 +10,7 @@ import (
 	"path"
 	"encoding/json"
 	"io/ioutil"
+	"time"
 )
 
 type LoadBalancer struct {
@@ -18,6 +19,7 @@ type LoadBalancer struct {
 	num_servers int
 	next_server int
 	mu          sync.Mutex
+	sleepInterval time.Duration
 }
 
 type HealthJson struct {
@@ -48,14 +50,12 @@ func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (lb *LoadBalancer) checkHealth() {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
-	var health string
-
-	make chan
+	atLeastOneHealthy := false
 	for i := 0; i < lb.num_servers; i += 1 {
 		// check if server[i] is healthy.
 		for {
 			var status HealthJson
-			health = p.Join(lb.servers[i], "_health")
+			health := p.Join(lb.servers[i], "_health")
 			resp, err := http.Get(health)
 			if err == nil {
 				body, err := ioutil.ReadAll(resp.Body)
@@ -63,6 +63,9 @@ func (lb *LoadBalancer) checkHealth() {
 					err = json.Unmarshall(body, &status)
 					if strings.compare(status.state, "healthy") == 0 {
 						lb.health[i] = true
+						if lb.next_server == -1 {
+							lb.next_server = i
+						}
 					} else {
 						lb.health[i] = false
 					}
@@ -78,8 +81,16 @@ func Make(port string, servers []string) *LoadBalancer {
 	lb := &LoadBalancer()
 	lb.servers = servers
 	lb.num_servers = something
-	lb.next_server = 0
+	lb.next_server = -1
+	lb.sleepInterval = time.Duration(5)
 	lb.health = []bool
+	go func(){
+		for {
+			lb.checkHealth()
+			time.Sleep(time.Millisecond * lb.sleepInterval)
+		}
+	}()
+	return lb
 }
 
 func main() {
@@ -116,6 +127,8 @@ func main() {
 	for e := l.Front(); e != nil; e = e.Next() {
 		fmt.Printf("\tServing server at address %s\n", e.Value)
 	}
+
 	//run server
+	log.fatal(http.ListenAndServe(port, lb)
 }
 
