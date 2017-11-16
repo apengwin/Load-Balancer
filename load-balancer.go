@@ -1,92 +1,108 @@
 package main
 
 import (
-	"container/list"
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"log"
 	"net/http"
 	"os"
+	"path"
 	"strings"
 	"sync"
-	"path"
-	"encoding/json"
-	"io/ioutil"
 	"time"
+	"container/list"
 )
 
 type LoadBalancer struct {
-	servers     []string
-	health      []bool
-	num_servers int
-	next_server int
-	mu          sync.Mutex
+	servers       []string
+	health        []bool
+	last_used     int
+	mu            sync.Mutex
 	sleepInterval time.Duration
 }
 
 type HealthJson struct {
-	state     string
+	state string
 }
 
 func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for {
 		lb.mu.Lock()
-		if lb.next_server == -1 {
-			http.Error(w, "" http.StatusServiceUnavailable)
+		if lb.last_used == -1 {
+			http.Error(w, "", http.StatusServiceUnavailable)
 			log.Printf("All servers down\n")
+			lb.mu.Unlock()
+			return
 		}
 		//figure out which server here.
-		server = lb.next_server
+		server := lb.last_used
+		for !lb.health[server] {
+			server = (server + 1) % len(lb.servers)
+		}
+		lb.last_used = server
 		lb.mu.Unlock()
-		resp, err := http.Get(server)
+		resp, err := http.Get(lb.servers[server])
 		if err != nil {
 			//CRASH
 		}
 		if resp.StatusCode != 500 {
-			fmt.Fprintf(w, resp.body)
+			payload, err := resp.Body.
+			fmt.Fprintf(w, resp.Body.string())
 			return
 		}
 	}
 }
 
-func (lb *LoadBalancer) checkHealth() {
-	lb.mu.Lock()
-	defer lb.mu.Unlock()
-	atLeastOneHealthy := false
-	for i := 0; i < lb.num_servers; i += 1 {
-		// check if server[i] is healthy.
-		for {
-			var status HealthJson
-			health := p.Join(lb.servers[i], "_health")
-			resp, err := http.Get(health)
+func (lb *LoadBalancer) checkHealth(server int) {
+	var status HealthJson
+	health := path.Join(lb.servers[server], "_health")
+	for {
+		resp, err := http.Get(health)
+		defer resp.Body.Close()
+		if err == nil {
+			body, err := ioutil.ReadAll(resp.Body)
 			if err == nil {
-				body, err := ioutil.ReadAll(resp.Body)
-				if err == nil {
-					err = json.Unmarshall(body, &status)
-					if strings.compare(status.state, "healthy") == 0 {
-						lb.health[i] = true
-						if lb.next_server == -1 {
-							lb.next_server = i
-						}
-					} else {
-						lb.health[i] = false
+				err = json.Unmarshall(body, &status)
+				if strings.Compare(status.state, "healthy") == 0 {
+					lb.health[server] = true
+					if lb.last_used == -1 {
+						lb.last_used = server
 					}
+				} else {
+					lb.health[server] = false
 				}
+				return
 			}
-			resp.Body.Close()
 		}
 	}
 }
 
+//
+// Poll all of the servers to see which ones are healthy.
+// Update lb.health array
+// This function loops in the background while lb handles connections. Check Make()
+//
+func (lb *LoadBalancer) updateHealth() {
+	lb.mu.Lock()
+	defer lb.mu.Unlock()
+	atLeastOneHealthy := false
+	for i := 0; i < len(lb.servers); i += 1 {
+		// check if server[i] is healthy.
+		//eventualy this should be threaded
+		lb.checkHealth(i)
+	}
+}
 
-func Make(port string, servers []string) *LoadBalancer {
-	lb := &LoadBalancer()
-	lb.servers = servers
-	lb.num_servers = something
-	lb.next_server = -1
+func Make(servers *List) *LoadBalancer {
+	lb := &LoadBalancer{}
+	lb.servers = make([]string, servers.Len())
+	lb.last_used = -1
 	lb.sleepInterval = time.Duration(5)
-	lb.health = []bool
-	go func(){
+	lb.health = make([]bool, servers.Len())
+	go func() {
 		for {
-			lb.checkHealth()
+			lb.updateHealth()
 			time.Sleep(time.Millisecond * lb.sleepInterval)
 		}
 	}()
@@ -122,13 +138,13 @@ func main() {
 	}
 
 	lb := Make(port, servers)
-
+	fmt.Println(port)
+	fmt.Println(servers)
 	fmt.Printf("\nListening on port %s\n", port)
-	for e := l.Front(); e != nil; e = e.Next() {
+	for e := servers.Front(); e != nil; e = e.Next() {
 		fmt.Printf("\tServing server at address %s\n", e.Value)
 	}
 
 	//run server
-	log.fatal(http.ListenAndServe(port, lb)
+	log.Fatal(http.ListenAndServe(":"+port, lb))
 }
-
