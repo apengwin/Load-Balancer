@@ -1,17 +1,19 @@
 package main
 
 import (
+	"container/list"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"strings"
 	"sync"
 	"time"
-	"container/list"
 )
 
 type LoadBalancer struct {
@@ -27,9 +29,10 @@ type HealthJson struct {
 }
 
 func copyHeader(src, dest http.Header) {
-	for k, vv := range src {
-		for _, v := range vv {
-			dest.Add(k, v)
+	//headers are stored as a map [string][]string
+	for headerName, vals := range src {
+		for _, v := range vals {
+			dest.Add(headerName, v)
 		}
 	}
 }
@@ -50,12 +53,13 @@ func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		lb.last_used = server
 		lb.mu.Unlock()
-		req.URL = lb.servers[server]
-		resp, _ := http.DefaultClient.Do(req)
+		proxyURL, _ := url.Parse(lb.servers[server])
+		r.URL = proxyURL
+		resp, _ := http.DefaultClient.Do(r)
 		if resp.StatusCode != 500 {
-			copyHeader(resp.header, w.Header())
-			w.writeHeader(resp.StatusCode)
+			copyHeader(resp.Header, w.Header())
 			io.Copy(w, resp.Body)
+			w.WriteHeader(resp.StatusCode)
 			return
 		}
 	}
@@ -64,8 +68,9 @@ func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (lb *LoadBalancer) checkHealth(server int) {
 	var status HealthJson
 	health := path.Join(lb.servers[server], "_health")
+	fmt.Println(lb.servers)
 	for {
-		resp, err := http.DefaultClient.Do(health)
+		resp, err := http.DefaultClient.Get(health)
 		defer resp.Body.Close()
 		if err == nil {
 			body, err := ioutil.ReadAll(resp.Body)
@@ -93,14 +98,13 @@ func (lb *LoadBalancer) checkHealth(server int) {
 func (lb *LoadBalancer) updateHealth() {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
-	atLeastOneHealthy := false
+	//atLeastOneHealthy := false
 	for i := 0; i < len(lb.servers); i += 1 {
 		// check if server[i] is healthy.
 		//eventualy this should be threaded
 		lb.checkHealth(i)
 	}
 }
-
 
 func Make(servers *list.List) *LoadBalancer {
 
@@ -117,7 +121,6 @@ func Make(servers *list.List) *LoadBalancer {
 	}()
 	return lb
 }
-
 
 func main() {
 
@@ -138,6 +141,7 @@ func main() {
 		} else {
 			if readServer {
 				servers.PushBack(str)
+				fmt.Println(str)
 			}
 			if readPort {
 				port = str
@@ -148,8 +152,6 @@ func main() {
 	}
 
 	lb := Make(servers)
-	fmt.Println(port)
-	fmt.Println(servers)
 	fmt.Printf("\nListening on port %s\n", port)
 	for e := servers.Front(); e != nil; e = e.Next() {
 		fmt.Printf("\tServing server at address %s\n", e.Value)
