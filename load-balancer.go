@@ -26,11 +26,19 @@ type HealthJson struct {
 	state string
 }
 
+func copyHeader(src, dest http.Header) {
+	for k, vv := range src {
+		for _, v := range vv {
+			dest.Add(k, v)
+		}
+	}
+}
+
 func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for {
 		lb.mu.Lock()
 		if lb.last_used == -1 {
-			http.Error(w, "", http.StatusServiceUnavailable)
+			http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
 			log.Printf("All servers down\n")
 			lb.mu.Unlock()
 			return
@@ -42,13 +50,12 @@ func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		lb.last_used = server
 		lb.mu.Unlock()
-		resp, err := http.Get(lb.servers[server])
-		if err != nil {
-			//CRASH
-		}
+		req.URL = lb.servers[server]
+		resp, _ := http.DefaultClient.Do(req)
 		if resp.StatusCode != 500 {
-			payload, err := resp.Body.
-			fmt.Fprintf(w, resp.Body.string())
+			copyHeader(resp.header, w.Header())
+			w.writeHeader(resp.StatusCode)
+			io.Copy(w, resp.Body)
 			return
 		}
 	}
@@ -58,12 +65,12 @@ func (lb *LoadBalancer) checkHealth(server int) {
 	var status HealthJson
 	health := path.Join(lb.servers[server], "_health")
 	for {
-		resp, err := http.Get(health)
+		resp, err := http.DefaultClient.Do(health)
 		defer resp.Body.Close()
 		if err == nil {
 			body, err := ioutil.ReadAll(resp.Body)
 			if err == nil {
-				err = json.Unmarshall(body, &status)
+				err = json.Unmarshal(body, &status)
 				if strings.Compare(status.state, "healthy") == 0 {
 					lb.health[server] = true
 					if lb.last_used == -1 {
@@ -94,7 +101,9 @@ func (lb *LoadBalancer) updateHealth() {
 	}
 }
 
-func Make(servers *List) *LoadBalancer {
+
+func Make(servers *list.List) *LoadBalancer {
+
 	lb := &LoadBalancer{}
 	lb.servers = make([]string, servers.Len())
 	lb.last_used = -1
@@ -108,6 +117,7 @@ func Make(servers *List) *LoadBalancer {
 	}()
 	return lb
 }
+
 
 func main() {
 
@@ -137,7 +147,7 @@ func main() {
 		}
 	}
 
-	lb := Make(port, servers)
+	lb := Make(servers)
 	fmt.Println(port)
 	fmt.Println(servers)
 	fmt.Printf("\nListening on port %s\n", port)
