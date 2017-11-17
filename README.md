@@ -2,3 +2,7 @@
 
 Round robin scheduling
 
+```
+./load-balancer.go -p <port> -b <server> -b <server> ... etc
+```
+
