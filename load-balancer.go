@@ -101,7 +101,7 @@ func (lb *LoadBalancer) checkHealth(server int) {
 		} else {
 			lb.health[server] = false
 		}
-		return
+		return lb.health[server]
 	}
 }
 
@@ -113,11 +113,16 @@ func (lb *LoadBalancer) checkHealth(server int) {
 func (lb *LoadBalancer) updateHealth() {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
-	//atLeastOneHealthy := false
+	atLeastOneHealthy := false
 	for i := 0; i < len(lb.servers); i += 1 {
 		// check if server[i] is healthy.
 		//eventualy this should be threaded
-		lb.checkHealth(i)
+		if lb.checkHealth(i) {
+			atLeastOneHealthy = true
+		}
+	}
+	if !atLeastOneHealthy {
+		lb.last_used = -1
 	}
 }
 
