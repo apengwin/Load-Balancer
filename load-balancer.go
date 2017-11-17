@@ -68,7 +68,7 @@ func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (lb *LoadBalancer) checkHealth(server int) {
+func (lb *LoadBalancer) checkHealth(server int) bool{
 	
 	var status map[string]interface{}
 	
