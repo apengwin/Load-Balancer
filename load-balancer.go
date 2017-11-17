@@ -10,14 +10,13 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
 	"strings"
 	"sync"
 	"time"
 )
 
 type LoadBalancer struct {
-	servers       []string
+	servers       []*url.URL
 	health        []bool
 	last_used     int
 	mu            sync.Mutex
@@ -53,8 +52,9 @@ func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		lb.last_used = server
 		lb.mu.Unlock()
-		proxyURL, _ := url.Parse(lb.servers[server])
-		r.URL = proxyURL
+
+		r.URL = lb.servers[server]
+
 		resp, _ := http.DefaultClient.Do(r)
 		if resp.StatusCode != 500 {
 			copyHeader(resp.Header, w.Header())
@@ -67,10 +67,16 @@ func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (lb *LoadBalancer) checkHealth(server int) {
 	var status HealthJson
-	health := path.Join(lb.servers[server], "_health")
-	fmt.Println(lb.servers)
+	
+	health, err := lb.servers[server].Parse("_health")
+	if err != nil {
+		log.Fatal(err)
+	}
 	for {
-		resp, err := http.DefaultClient.Get(health)
+		resp, err := http.Get(health.String())
+		if err != nil {
+			log.Fatal(err)
+		}
 		defer resp.Body.Close()
 		if err == nil {
 			body, err := ioutil.ReadAll(resp.Body)
@@ -109,7 +115,16 @@ func (lb *LoadBalancer) updateHealth() {
 func Make(servers *list.List) *LoadBalancer {
 
 	lb := &LoadBalancer{}
-	lb.servers = make([]string, servers.Len())
+	lb.servers = make([]*url.URL, servers.Len())
+	i := 0
+	for e := servers.Front(); e != nil; e = e.Next() {
+		url, err := url.Parse(e.Value.(string))
+		if err != nil {
+			log.Fatal(err)
+		}
+		lb.servers[i] = url
+		i += 1
+	}
 	lb.last_used = -1
 	lb.sleepInterval = time.Duration(5)
 	lb.health = make([]bool, servers.Len())
@@ -141,7 +156,6 @@ func main() {
 		} else {
 			if readServer {
 				servers.PushBack(str)
-				fmt.Println(str)
 			}
 			if readPort {
 				port = str
