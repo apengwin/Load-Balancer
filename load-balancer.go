@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"bytes"
 )
 
 type LoadBalancer struct {
@@ -21,10 +22,6 @@ type LoadBalancer struct {
 	last_used     int
 	mu            sync.Mutex
 	sleepInterval time.Duration
-}
-
-type HealthJson struct {
-	state string
 }
 
 func copyHeader(src, dest http.Header) {
@@ -53,9 +50,15 @@ func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		lb.last_used = server
 		lb.mu.Unlock()
 
-		r.URL = lb.servers[server]
+		proxyURL := lb.servers[server].String()
+		proxyBody, _ := ioutil.ReadAll(r.Body)
 
-		resp, _ := http.DefaultClient.Do(r)
+		proxyReq, err := http.NewRequest(r.Method, proxyURL, bytes.NewReader(proxyBody))
+
+		resp, err := http.DefaultClient.Do(proxyReq)
+		if err != nil {
+			log.Fatal(err)
+		}
 		if resp.StatusCode != 500 {
 			copyHeader(resp.Header, w.Header())
 			io.Copy(w, resp.Body)
@@ -66,7 +69,8 @@ func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (lb *LoadBalancer) checkHealth(server int) {
-	var status HealthJson
+	
+	var status map[string]interface{}
 	
 	health, err := lb.servers[server].Parse("_health")
 	if err != nil {
@@ -74,25 +78,30 @@ func (lb *LoadBalancer) checkHealth(server int) {
 	}
 	for {
 		resp, err := http.Get(health.String())
+		defer resp.Body.Close()
+		if err != nil {
+			log.Println(err)
+		}
+		if err != nil {
+			log.Println(err)
+		}
+		body, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
 			log.Fatal(err)
 		}
-		defer resp.Body.Close()
-		if err == nil {
-			body, err := ioutil.ReadAll(resp.Body)
-			if err == nil {
-				err = json.Unmarshal(body, &status)
-				if strings.Compare(status.state, "healthy") == 0 {
-					lb.health[server] = true
-					if lb.last_used == -1 {
-						lb.last_used = server
-					}
-				} else {
-					lb.health[server] = false
-				}
-				return
-			}
+		err = json.Unmarshal(body, &status)
+		if err != nil {
+			log.Fatal(err)
 		}
+		if strings.Compare(status["state"].(string), "healthy") == 0 {
+			lb.health[server] = true
+			if lb.last_used == -1 {
+				lb.last_used = server
+			}
+		} else {
+			lb.health[server] = false
+		}
+		return
 	}
 }
 
