@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"container/list"
 	"encoding/json"
 	"fmt"
@@ -13,7 +14,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"bytes"
 )
 
 type LoadBalancer struct {
@@ -68,10 +68,10 @@ func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (lb *LoadBalancer) checkHealth(server int) bool{
-	
+func (lb *LoadBalancer) checkHealth(server int) bool {
+
 	var status map[string]interface{}
-	
+
 	health, err := lb.servers[server].Parse("_health")
 	if err != nil {
 		log.Fatal(err)
